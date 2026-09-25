@@ -48,8 +48,6 @@ class ScrollableFrame(tk.Frame):
 # Main Application
 # ===========================================================================
 class StudentManagementApp(tk.Tk):
-    """Root application window hosting the sidebar dashboard and content area."""
-
     def __init__(self):
         super().__init__()
         self.title("Student Course Management System")
@@ -59,7 +57,6 @@ class StudentManagementApp(tk.Tk):
 
         ui.configure_styles(self)
 
-        # ---- Shared backend objects ----
         self.db = Database()
         self.student_model = StudentModel(self.db)
 
@@ -106,7 +103,6 @@ class StudentManagementApp(tk.Tk):
             ("📋  View All Students", self.show_view_students),
             ("💳  Make Course Payment", self.open_payment_window),
             ("🎖️  Certificate Eligibility", self.open_certificate_window),
-            ("🔍  Search Student", self.show_search_student),
             ("✏️  Edit Student Details", self.show_edit_student),
             ("🗑️  Delete Student Record", self.show_delete_student),
         ]
@@ -323,46 +319,43 @@ class StudentManagementApp(tk.Tk):
         self._clear_content()
         self._page_header("View All Students", "Browse, search, filter, and manage student records")
 
-        # ---- Toolbar: search + filters + export ----
         toolbar_outer, toolbar = ui.make_card(self.content, padx=15, pady=12)
         toolbar_outer.pack(fill="x", padx=25, pady=(0, 10))
 
-        ui.make_label(toolbar, "Search:").grid(row=0, column=0, padx=(0, 5), sticky="w")
-        search_var = tk.StringVar()
-        search_entry = ui.make_entry(toolbar, search_var, width=22)
-        search_entry.grid(row=0, column=1, padx=(0, 15))
+        search_box = ui.LiveStudentSearch(toolbar, self.student_model, on_select=lambda student: populate_tree([student]))
+        search_box.frame.grid(row=0, column=0, sticky="w", padx=(0, 15))
 
-        ui.make_label(toolbar, "Course Type:").grid(row=0, column=2, padx=(0, 5), sticky="w")
+        ui.make_label(toolbar, "Course Type:").grid(row=0, column=1, padx=(0, 5), sticky="w")
         course_filter_var = tk.StringVar(value="All")
         ttk.Combobox(toolbar, textvariable=course_filter_var,
                      values=["All"] + COURSE_TYPES, state="readonly", width=24).grid(
-            row=0, column=3, padx=(0, 15))
+            row=0, column=2, padx=(0, 15))
 
-        ui.make_label(toolbar, "Payment Status:").grid(row=0, column=4, padx=(0, 5), sticky="w")
+        ui.make_label(toolbar, "Payment Status:").grid(row=0, column=3, padx=(0, 5), sticky="w")
         status_filter_var = tk.StringVar(value="All")
         ttk.Combobox(toolbar, textvariable=status_filter_var,
                      values=["All", "Fully Paid", "Pending"], state="readonly", width=14).grid(
-            row=0, column=5, padx=(0, 15))
+            row=0, column=4, padx=(0, 15))
 
         def apply_filters():
-            keyword = search_var.get().strip()
-            if keyword:
-                rows = self.student_model.search_students(keyword)
-            else:
-                rows = self.student_model.filter_students(
-                    course_filter_var.get(), status_filter_var.get())
+            query = search_box._current_query()
+            rows = self.student_model.get_all_students()
+            if query:
+                rows = self.student_model.search_students(query)
+            course = course_filter_var.get()
+            status = status_filter_var.get()
+            if course != "All":
+                rows = [row for row in rows if row["course_type"] == course]
+            if status != "All":
+                expected = "Fully Paid" if status == "Fully Paid" else "Pending"
+                rows = [row for row in rows if ("Fully Paid" if row["balance_fees"] <= 0 else "Pending") == expected]
             populate_tree(rows)
 
-        def reset_filters():
-            search_var.set("")
-            course_filter_var.set("All")
-            status_filter_var.set("All")
-            populate_tree(self.student_model.get_all_students())
-
-        ui.make_button(toolbar, "Apply", apply_filters, bg=ui.COLORS["primary"],
-                        width=10).grid(row=0, column=6, padx=5)
-        ui.make_button(toolbar, "Reset", reset_filters, bg=ui.COLORS["muted"],
-                        width=10).grid(row=0, column=7, padx=5)
+        search_box.entry.bind("<KeyRelease>", lambda _event: apply_filters())
+        course_filter_var.set("All")
+        status_filter_var.set("All")
+        course_filter_var.trace_add("write", lambda *_: apply_filters())
+        status_filter_var.trace_add("write", lambda *_: apply_filters())
 
         def export_excel():
             rows = current_rows["data"]
@@ -377,7 +370,7 @@ class StudentManagementApp(tk.Tk):
             messagebox.showinfo("Export Successful", f"Students exported to:\n{path}")
 
         ui.make_button(toolbar, "📤 Export to Excel", export_excel,
-                        bg=ui.COLORS["secondary"], width=16).grid(row=0, column=8, padx=5)
+                        bg=ui.COLORS["secondary"], width=16).grid(row=0, column=5, padx=5)
 
         # ---- Table ----
         table_outer, table_card = ui.make_card(self.content, padx=10, pady=10)
@@ -464,98 +457,42 @@ class StudentManagementApp(tk.Tk):
     # 3. COURSE PAYMENT (opens Toplevel from payment.py)
     # ------------------------------------------------------------------
     def open_payment_window(self):
-        PaymentWindow(self, self.db, on_payment_made=self._refresh_if_visible)
+        self._clear_content()
+        self._page_header("Make Course Payment", "Record and manage student course fees")
+        PaymentWindow(self.content, self.db, on_payment_made=self._refresh_if_visible)
 
     # ------------------------------------------------------------------
-    # 4. CERTIFICATE ELIGIBILITY (opens Toplevel from certificate.py)
+    # 4. CERTIFICATE ELIGIBILITY (opens embedded panel from certificate.py)
     # ------------------------------------------------------------------
     def open_certificate_window(self):
-        CertificateWindow(self, self.db)
+        self._clear_content()
+        self._page_header("Certificate Eligibility", "Review fully paid students")
+        CertificateWindow(self.content, self.db)
 
     def _refresh_if_visible(self):
         """Lightweight refresh hook so dashboard stats stay current after a payment."""
         pass  # Dashboard recalculates from DB each time it's shown; nothing to do here.
 
     # ------------------------------------------------------------------
-    # 5. SEARCH STUDENT
-    # ------------------------------------------------------------------
-    def show_search_student(self):
-        self._clear_content()
-        self._page_header("Search Student", "Search by Register ID, Name, Phone, or Email")
-
-        search_outer, search_card = ui.make_card(self.content, padx=20, pady=15)
-        search_outer.pack(fill="x", padx=25, pady=(0, 10))
-
-        ui.make_label(search_card, "Search Keyword:").pack(side="left", padx=(0, 10))
-        keyword_var = tk.StringVar()
-        entry = ui.make_entry(search_card, keyword_var, width=35)
-        entry.pack(side="left", padx=(0, 10))
-
-        table_outer, table_card = ui.make_card(self.content, padx=10, pady=10)
-        table_outer.pack(fill="both", expand=True, padx=25, pady=(0, 20))
-
-        columns = ("register_id", "student_name", "phone", "email",
-                   "course_name", "course_type", "balance_fees", "status")
-        headings = ("Reg. ID", "Student Name", "Phone", "Email",
-                    "Course Name", "Course Type", "Balance Fees", "Status")
-        tree = ttk.Treeview(table_card, columns=columns, show="headings")
-        for col, head in zip(columns, headings):
-            tree.heading(col, text=head)
-            tree.column(col, width=130)
-        tree.pack(fill="both", expand=True)
-
-        def do_search():
-            keyword = keyword_var.get().strip()
-            tree.delete(*tree.get_children())
-            if not keyword:
-                messagebox.showinfo("Search", "Please enter a search keyword.")
-                return
-            results = self.student_model.search_students(keyword)
-            if not results:
-                messagebox.showinfo("No Results", f"No students found matching '{keyword}'.")
-            for r in results:
-                status = "Fully Paid" if r["balance_fees"] <= 0 else "Pending"
-                tree.insert("", "end", values=(
-                    r["register_id"], r["student_name"], r["phone"], r["email"],
-                    r["course_name"], r["course_type"], f"{r['balance_fees']:.2f}", status
-                ))
-
-        entry.bind("<Return>", lambda e: do_search())
-        ui.make_button(search_card, "🔍 Search", do_search, bg=ui.COLORS["primary"],
-                        width=12).pack(side="left", padx=5)
-
-    # ------------------------------------------------------------------
-    # 6. EDIT STUDENT DETAILS
+    # 5. EDIT STUDENT DETAILS
     # ------------------------------------------------------------------
     def show_edit_student(self):
         self._clear_content()
-        self._page_header("Edit Student Details", "Look up a student by Register ID, then update their record")
+        self._page_header("Edit Student Details", "Look up a student and update their record")
 
         lookup_outer, lookup_card = ui.make_card(self.content, padx=20, pady=15)
         lookup_outer.pack(fill="x", padx=25, pady=(0, 10))
 
-        ui.make_label(lookup_card, "Register ID:").pack(side="left", padx=(0, 10))
-        reg_id_var = tk.StringVar()
-        entry = ui.make_entry(lookup_card, reg_id_var, width=20)
-        entry.pack(side="left", padx=(0, 10))
+        live_search = ui.LiveStudentSearch(
+            lookup_card,
+            self.student_model,
+            on_select=lambda student: render_edit_form(student),
+            width=40,
+        )
+        live_search.frame.pack(fill="x")
 
         form_container = tk.Frame(self.content, bg=ui.COLORS["bg"])
         form_container.pack(fill="both", expand=True, padx=25, pady=(0, 20))
-
-        def load_student():
-            reg_id_text = reg_id_var.get().strip()
-            if not reg_id_text.isdigit():
-                messagebox.showerror("Invalid Input", "Please enter a valid numeric Register ID.")
-                return
-            student = self.student_model.get_student_by_register_id(int(reg_id_text))
-            if not student:
-                messagebox.showerror("Not Found", f"No student found with Register ID {reg_id_text}.")
-                return
-            render_edit_form(student)
-
-        entry.bind("<Return>", lambda e: load_student())
-        ui.make_button(lookup_card, "Load Student", load_student,
-                        bg=ui.COLORS["primary"], width=14).pack(side="left", padx=5)
 
         def render_edit_form(student):
             for w in form_container.winfo_children():
@@ -570,12 +507,10 @@ class StudentManagementApp(tk.Tk):
                            size=13, color=ui.COLORS["primary"]).grid(
                 row=0, column=0, columnspan=4, sticky="w", pady=(0, 6))
 
-            # Editable Register ID field
             ui.make_label(card, "Register ID:").grid(row=1, column=0, sticky="w", pady=6)
             reg_id_var = tk.StringVar(value=str(student["register_id"]))
             ui.make_entry(card, reg_id_var, width=18).grid(row=1, column=1, sticky="w", pady=6,
                                                            padx=(0, 20))
-
 
             def add_field(row, col, label, key, initial, width=28):
                 ui.make_label(card, f"{label}:").grid(row=row, column=col, sticky="w", pady=6,
@@ -622,7 +557,6 @@ class StudentManagementApp(tk.Tk):
 
             def save_changes():
                 data = {k: v.get() for k, v in vars_.items()}
-                # include editable register id if changed
                 data["register_id"] = reg_id_var.get()
                 try:
                     self.student_model.update_student(student["register_id"], data)
@@ -633,7 +567,9 @@ class StudentManagementApp(tk.Tk):
                     messagebox.showerror("Database Error", str(e))
                     return
                 messagebox.showinfo("Success", "Student details updated successfully.")
-                load_student()
+                student = self.student_model.get_student_by_register_id(int(reg_id_var.get()))
+                if student:
+                    render_edit_form(student)
 
             btn_frame = tk.Frame(card, bg=ui.COLORS["card_bg"])
             btn_frame.grid(row=7, column=0, columnspan=4, pady=(20, 0), sticky="w")
@@ -641,7 +577,7 @@ class StudentManagementApp(tk.Tk):
                             bg=ui.COLORS["secondary"], width=16).pack(side="left", padx=5)
 
     # ------------------------------------------------------------------
-    # 7. DELETE STUDENT RECORD
+    # 6. DELETE STUDENT RECORD
     # ------------------------------------------------------------------
     def show_delete_student(self):
         self._clear_content()
@@ -650,30 +586,23 @@ class StudentManagementApp(tk.Tk):
         lookup_outer, lookup_card = ui.make_card(self.content, padx=20, pady=15)
         lookup_outer.pack(fill="x", padx=25, pady=(0, 10))
 
-        ui.make_label(lookup_card, "Register ID:").pack(side="left", padx=(0, 10))
-        reg_id_var = tk.StringVar()
-        entry = ui.make_entry(lookup_card, reg_id_var, width=20)
-        entry.pack(side="left", padx=(0, 10))
+        live_search = ui.LiveStudentSearch(
+            lookup_card,
+            self.student_model,
+            on_select=lambda student: load_student(student),
+            width=40,
+        )
+        live_search.frame.pack(fill="x")
 
         details_outer, details_card = ui.make_card(self.content, padx=20, pady=20)
         details_outer.pack(fill="x", padx=25, pady=(0, 20))
-        details_label = ui.make_label(details_card, "Enter a Register ID and click 'Load' to preview the record.",
-                                       color=ui.COLORS["muted"])
+        details_label = ui.make_label(details_card, "Start typing to find a student to delete.",
+                                     color=ui.COLORS["muted"])
         details_label.pack(anchor="w")
 
         state = {"student": None}
 
-        def load_student():
-            reg_id_text = reg_id_var.get().strip()
-            if not reg_id_text.isdigit():
-                messagebox.showerror("Invalid Input", "Please enter a valid numeric Register ID.")
-                return
-            student = self.student_model.get_student_by_register_id(int(reg_id_text))
-            if not student:
-                messagebox.showerror("Not Found", f"No student found with Register ID {reg_id_text}.")
-                state["student"] = None
-                details_label.config(text="No student loaded.")
-                return
+        def load_student(student):
             state["student"] = student
             details_label.config(
                 text=(f"Register ID: {student['register_id']}\n"
@@ -686,7 +615,7 @@ class StudentManagementApp(tk.Tk):
         def delete_student():
             student = state["student"]
             if not student:
-                messagebox.showwarning("No Student Loaded", "Please load a student record first.")
+                messagebox.showwarning("No Student Loaded", "Please select a student first.")
                 return
             confirm = messagebox.askyesno(
                 "Confirm Deletion",
@@ -703,17 +632,17 @@ class StudentManagementApp(tk.Tk):
                 messagebox.showerror("Error", str(e))
                 return
             messagebox.showinfo("Deleted", "Student record deleted successfully.")
-            reg_id_var.set("")
             state["student"] = None
-            details_label.config(text="No student loaded.", fg=ui.COLORS["muted"])
+            details_label.config(text="Start typing to find a student to delete.", fg=ui.COLORS["muted"])
 
-        entry.bind("<Return>", lambda e: load_student())
-        ui.make_button(lookup_card, "Load", load_student,
-                        bg=ui.COLORS["primary"], width=10).pack(side="left", padx=5)
-        ui.make_button(lookup_card, "🗑️ Delete Student", delete_student,
-                        bg=ui.COLORS["danger"], width=16).pack(side="left", padx=5)
+        btn_frame = tk.Frame(lookup_card, bg=ui.COLORS["card_bg"])
+        btn_frame.pack(fill="x", pady=(10, 0))
+        ui.make_button(btn_frame, "🗑️ Delete Selected Student", delete_student,
+                        bg=ui.COLORS["danger"], width=22).pack(side="left", padx=5)
 
-
+    # ------------------------------------------------------------------
+    # 7. PAYMENT SECTION
+    # ------------------------------------------------------------------
 # ===========================================================================
 # Application entry point
 # ===========================================================================

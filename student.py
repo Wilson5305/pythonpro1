@@ -173,7 +173,7 @@ class StudentModel:
 
     def search_students(self, keyword):
         """
-        Searches students by register_id, name, phone, or email.
+        Searches students by register_id, name, phone, email, or course name.
         Performs a case-insensitive partial match using LIKE.
         """
         keyword = f"%{keyword.strip()}%"
@@ -183,8 +183,9 @@ class StudentModel:
                OR student_name LIKE ?
                OR phone LIKE ?
                OR email LIKE ?
+               OR course_name LIKE ?
             ORDER BY register_id ASC
-        """, (keyword, keyword, keyword, keyword))
+        """, (keyword, keyword, keyword, keyword, keyword))
 
     def filter_students(self, course_type=None, payment_status=None):
         """

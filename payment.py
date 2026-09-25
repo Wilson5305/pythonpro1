@@ -80,32 +80,25 @@ class PaymentModel:
 # ===========================================================================
 # VIEW: Course Payment Module window
 # ===========================================================================
-class PaymentWindow(tk.Toplevel):
+class PaymentWindow(tk.Frame):
     """
-    Toplevel window implementing the 'Make Course Payment' module:
+    Embedded payment module shown inside the main application shell.
       1. Student lookup by Register ID
       2. Display of Register ID, Name, Course, Total Fees, Previous Paid, Balance
       3. Payment entry fields (amount, date, method)
       4. Recalculates Paid/Balance, updates payment_status
-      5. Shows a certificate-eligibility popup once Balance reaches 0
-      6. Records the transaction into the Payments history table
+      5. Records the transaction into the Payments history table
     """
 
     def __init__(self, master, db, on_payment_made=None):
-        super().__init__(master)
+        super().__init__(master, bg=ui.COLORS["bg"])
         self.db = db
         self.student_model = StudentModel(db)
         self.payment_model = PaymentModel(db)
         self.on_payment_made = on_payment_made  # callback to refresh other screens
         self.current_student = None
 
-        self.title("Make Course Payment")
-        self.geometry("600x650")
-        self.configure(bg=ui.COLORS["bg"])
-        self.resizable(False, False)
-        self.transient(master)
-        self.grab_set()
-
+        self.pack(fill="both", expand=True)
         self._build_ui()
 
     # ------------------------------------------------------------------
@@ -123,15 +116,16 @@ class PaymentWindow(tk.Toplevel):
         lookup_card_outer, lookup_card = ui.make_card(body)
         lookup_card_outer.pack(fill="x", pady=(0, 12))
 
-        ui.make_label(lookup_card, "Enter Register ID:", bold=True).grid(
+        ui.make_label(lookup_card, "Search Student:", bold=True).grid(
             row=0, column=0, sticky="w", padx=(0, 10), pady=5)
-        self.register_id_var = tk.StringVar()
-        entry = ui.make_entry(lookup_card, self.register_id_var, width=20)
-        entry.grid(row=0, column=1, sticky="w", pady=5)
-        entry.bind("<Return>", lambda e: self._lookup_student())
-
-        ui.make_button(lookup_card, "Search", self._lookup_student,
-                        bg=ui.COLORS["primary"], width=10).grid(row=0, column=2, padx=10)
+        self.search_widget = ui.LiveStudentSearch(
+            lookup_card,
+            self.student_model,
+            on_select=lambda student: self._load_student_record(student),
+            width=28,
+        )
+        self.search_widget.frame.grid(row=0, column=1, sticky="ew", pady=5)
+        lookup_card.grid_columnconfigure(1, weight=1)
 
         # ---- Student / fee summary ----
         summary_outer, summary_card = ui.make_card(body)
@@ -186,19 +180,23 @@ class PaymentWindow(tk.Toplevel):
 
     # ------------------------------------------------------------------
     def _lookup_student(self):
-        """Looks up a student by register ID and populates the summary card."""
-        reg_id_text = self.register_id_var.get().strip()
+        """Legacy fallback for manual ID lookup; kept for compatibility."""
+        reg_id_text = getattr(self, "register_id_var", tk.StringVar()).get().strip()
         if not reg_id_text.isdigit():
             messagebox.showerror("Invalid Input", "Please enter a valid numeric Register ID.")
             return
 
         student = self.student_model.get_student_by_register_id(int(reg_id_text))
-        if not student:
-            messagebox.showerror("Not Found", f"No student found with Register ID {reg_id_text}.")
-            self.current_student = None
-            return
+        if student:
+            self._load_student_record(student)
 
+    def _load_student_record(self, student):
+        """Populate the fee summary for the selected student."""
         self.current_student = student
+
+        if hasattr(self, "register_id_var"):
+            self.register_id_var.set(str(student["register_id"]))
+
         self.summary_labels["register_id"].config(text=str(student["register_id"]))
         self.summary_labels["student_name"].config(text=student["student_name"])
         self.summary_labels["course_name"].config(text=student["course_name"])
@@ -206,9 +204,8 @@ class PaymentWindow(tk.Toplevel):
         self.summary_labels["paid_amount"].config(text=f"{student['paid_amount']:.2f}")
         self.summary_labels["balance_fees"].config(text=f"{student['balance_fees']:.2f}")
 
-        if student["balance_fees"] <= 0:
-            messagebox.showinfo("Already Fully Paid",
-                                 "This student has already cleared all course fees.")
+        # Keep the student lookup and payment functionality intact without
+        # showing an unsolicited payment/certificate popup when the balance is zero.
 
     def _submit_payment(self):
         """Validates and submits the payment, updating both tables."""
@@ -251,9 +248,9 @@ class PaymentWindow(tk.Toplevel):
                              f"Payment of {amount:.2f} recorded successfully.\n"
                              f"New Balance: {new_balance:.2f}")
 
-        if new_balance <= 0:
-            messagebox.showinfo("Certificate Eligibility",
-                                 "Student is eligible for Course Completion Certificate.")
+        # Do not trigger a certificate eligibility popup automatically when a
+        # payment clears the balance. The certificate screen remains available
+        # through the explicit UI action and is not forced on the user.
 
         if self.on_payment_made:
             self.on_payment_made()
@@ -261,7 +258,10 @@ class PaymentWindow(tk.Toplevel):
         self.paid_amount_var.set("")
 
     def _clear_form(self):
-        self.register_id_var.set("")
+        if hasattr(self, "register_id_var"):
+            self.register_id_var.set("")
+        self.search_widget.var.set("")
+        self.search_widget._set_placeholder()
         self.paid_amount_var.set("")
         self.payment_date_var.set(PaymentModel.today())
         self.payment_method_var.set(PAYMENT_METHODS[0])

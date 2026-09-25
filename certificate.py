@@ -24,22 +24,17 @@ CHECK_ON = "\u2611"   # ☑
 CHECK_OFF = "\u2610"  # ☐
 
 
-class CertificateWindow(tk.Toplevel):
-    """Toplevel window for the Certificate Eligibility module."""
+class CertificateWindow(tk.Frame):
+    """Embedded certificate eligibility module shown inside the main app shell."""
 
     def __init__(self, master, db):
-        super().__init__(master)
+        super().__init__(master, bg=ui.COLORS["bg"])
         self.db = db
         self.student_model = StudentModel(db)
         self.checked_ids = set()  # set of register_ids currently checked
         self.row_lookup = {}      # iid -> sqlite3.Row, for quick access
 
-        self.title("Certificate Eligibility")
-        self.geometry("950x600")
-        self.configure(bg=ui.COLORS["bg"])
-        self.transient(master)
-        self.grab_set()
-
+        self.pack(fill="both", expand=True)
         self._build_ui()
         self._load_data()
 
